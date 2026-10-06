@@ -1,0 +1,42 @@
+# Production-style stack: Najik API + coturn (TURN relay for calls on mobile networks).
+# Put a TLS reverse proxy (Caddy / Nginx / Traefik) in front of `najik` on 443.
+#
+#   cp ../server/.env.example .env   # then edit secrets & URLs
+#   docker compose up -d --build
+services:
+  najik:
+    build: ../server
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/najik.db
+      HOST: 0.0.0.0
+      PORT: 4000
+    volumes:
+      - najik-data:/app/data
+    ports:
+      # Only reachable through the TLS reverse proxy on this host (keeps X-Forwarded-For trustworthy).
+      - '127.0.0.1:4000:4000'
+    restart: unless-stopped
+
+  coturn:
+    image: coturn/coturn:latest
+    network_mode: host
+    restart: unless-stopped
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49400
+      - --fingerprint
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET}
+      - --realm=${TURN_REALM:-najik}
+      - --no-cli
+      - --no-multicast-peers
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+
+volumes:
+  najik-data:

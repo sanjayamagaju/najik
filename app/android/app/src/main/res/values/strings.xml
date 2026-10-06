@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Najik</string>
+    <string name="title_activity_main">Najik</string>
+    <string name="package_name">com.najik.app</string>
+    <string name="custom_url_scheme">com.najik.app</string>
+</resources>

@@ -1,0 +1,20 @@
+node_modules/
+dist/
+*.log
+.env
+.env.local
+.env.production.local
+server/data/
+app/android/app/build/
+app/android/.gradle/
+app/android/build/
+app/android/local.properties
+app/android/app/release/
+*.keystore
+*.jks
+
+# Firebase credentials
+*firebase-adminsdk*.json
+*service-account*.json
+app/android/app/google-services.json
+app/android/keystore.properties
