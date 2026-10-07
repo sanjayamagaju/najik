@@ -1,0 +1,43 @@
+[project]
+name = "najik-backend"
+version = "1.0.0"
+description = "Najik 1-to-1 messaging and WebRTC calling backend"
+requires-python = ">=3.13"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = [".venv", "staticfiles"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "DJ", "S", "SIM", "RUF", "ASYNC", "C4", "PIE", "RET", "PT"]
+ignore = [
+  "RUF012",  # Django/DRF class attributes are mutable by convention
+  "S105",    # false positives on names like "token_type"
+  "S106",
+  "RET504",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S311", "PT011", "PT018", "RUF059", "ASYNC109"]
+"*/migrations/*" = ["E501", "RUF"]
+"config/settings/*" = ["F405", "F403"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["apps", "config"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = ["test_*.py"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers"
+markers = [
+  "postgres: requires a real PostgreSQL DATABASE_URL (skipped otherwise)",
+]
+filterwarnings = [
+  "ignore::DeprecationWarning:celery.*",
+  "ignore::DeprecationWarning:kombu.*",
+  "ignore:No directory at:UserWarning",
+]

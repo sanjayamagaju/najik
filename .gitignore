@@ -1,20 +1,43 @@
-node_modules/
-dist/
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
 *.log
-.env
-.env.local
-.env.production.local
-server/data/
-app/android/app/build/
-app/android/.gradle/
-app/android/build/
-app/android/local.properties
-app/android/app/release/
-*.keystore
-*.jks
 
-# Firebase credentials
-*firebase-adminsdk*.json
-*service-account*.json
-app/android/app/google-services.json
-app/android/keystore.properties
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.p12
+*.jks
+*.keystore
+google-services.json
+GoogleService-Info.plist
+firebase-service-account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+backend/staticfiles/
+backend/media/
+*.sqlite3
+
+# Node / Expo
+node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+mobile/ios/
+mobile/android/
+mobile/coverage/
+*.tsbuildinfo

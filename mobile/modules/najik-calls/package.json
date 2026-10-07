@@ -1,0 +1,8 @@
+{
+  "name": "najik-calls",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Najik native call UX: iOS PushKit + CallKit, Android full-screen incoming-call notification + call foreground service",
+  "main": "index.ts",
+  "license": "UNLICENSED"
+}

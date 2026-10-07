@@ -1,0 +1,10 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["NajikCallsModule"],
+    "appDelegateSubscribers": ["NajikCallsAppDelegateSubscriber"]
+  },
+  "android": {
+    "modules": ["com.najik.calls.NajikCallsModule"]
+  }
+}

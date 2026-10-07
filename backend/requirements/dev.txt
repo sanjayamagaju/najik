@@ -1,0 +1,9 @@
+-r base.txt
+pytest==9.1.1
+pytest-django==4.14.0
+pytest-asyncio==1.4.0
+fakeredis[lua]==2.39.0
+lupa==2.8
+factory_boy==3.3.3
+daphne==4.2.3  # required by channels.testing
+ruff==0.16.10

@@ -1,0 +1,47 @@
+# Caddy: automatic HTTPS (Let's Encrypt / ZeroSSL), HTTP/1.1 + HTTP/2 + HTTP/3,
+# WebSocket upgrades proxied transparently to the ASGI api service.
+{
+	email {$ACME_EMAIL}
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	# Prometheus metrics are internal-only (scrape api:8000/metrics on the private network).
+	@internal path /metrics /metrics/*
+	respond @internal 404
+
+	request_body {
+		max_size 1MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		-Server
+	}
+
+	reverse_proxy api:8000 {
+		# Caddy sets X-Forwarded-For/-Proto/-Host; Django trusts X-Forwarded-Proto.
+		flush_interval -1
+		# Keep WebSockets open across config reloads instead of cutting them immediately.
+		stream_close_delay 5m
+		health_uri /healthz
+		health_headers {
+			Host {$API_DOMAIN}
+		}
+		health_interval 10s
+	}
+	# No access log here on purpose: request URIs may contain search terms. The app emits
+	# structured access logs without query strings.
+}
+
+# A site block for the TURN host only so that Caddy obtains (and renews) its certificate,
+# which coturn reads read-only from the shared caddy_data volume for TURNS on 5349.
+{$TURN_DOMAIN} {
+	respond "ok" 200
+}

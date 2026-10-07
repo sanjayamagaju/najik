@@ -1,0 +1,56 @@
+name: EAS build & submit
+
+# Store builds run on Expo's infrastructure. Signing credentials are EAS-managed
+# (never stored in this repo). Requires the EXPO_TOKEN repository secret.
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Build profile
+        type: choice
+        options: [staging, production]
+        default: staging
+      platform:
+        description: Platform
+        type: choice
+        options: [all, android, ios]
+        default: all
+      submit:
+        description: Submit to Play Console / App Store Connect (production only)
+        type: boolean
+        default: false
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      PROFILE: ${{ github.event_name == 'push' && 'production' || inputs.profile }}
+      PLATFORM: ${{ github.event_name == 'push' && 'all' || inputs.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+      - run: npm ci
+      - run: npm run typecheck && npm test -- --ci
+      - name: Build (and auto-submit production builds when requested)
+        run: |
+          EXTRA=""
+          if [ "$PROFILE" = "production" ] && { [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.submit }}" = "true" ]; }; then
+            EXTRA="--auto-submit"
+          fi
+          eas build --profile "$PROFILE" --platform "$PLATFORM" --non-interactive --no-wait $EXTRA

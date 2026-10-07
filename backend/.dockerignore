@@ -1,0 +1,17 @@
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.sqlite3
+.env
+.env.*
+!.env.example
+staticfiles/
+media/
+tests/
+.coverage
+htmlcov/
+Dockerfile
+.dockerignore

@@ -1,42 +1,184 @@
-# Production-style stack: Najik API + coturn (TURN relay for calls on mobile networks).
-# Put a TLS reverse proxy (Caddy / Nginx / Traefik) in front of `najik` on 443.
+# Najik production stack (single host).
 #
-#   cp ../server/.env.example .env   # then edit secrets & URLs
-#   docker compose up -d --build
-services:
-  najik:
-    build: ../server
-    env_file: .env
-    environment:
-      DATABASE_PATH: /app/data/najik.db
-      HOST: 0.0.0.0
-      PORT: 4000
-    volumes:
-      - najik-data:/app/data
-    ports:
-      # Only reachable through the TLS reverse proxy on this host (keeps X-Forwarded-For trustworthy).
-      - '127.0.0.1:4000:4000'
-    restart: unless-stopped
+#   docker compose --env-file .env up -d --build
+#
+# Services: caddy (TLS, HTTP/3, reverse proxy), migrate (one-off), api (gunicorn + uvicorn
+# workers: HTTP + WebSocket), worker (celery), beat (celery beat, exactly one), postgres 17,
+# redis 7 (AOF), coturn (host network). See README.md for the runbook.
 
-  coturn:
-    image: coturn/coturn:latest
-    network_mode: host
+name: najik
+
+x-backend: &backend
+  image: ${NAJIK_IMAGE:-najik-backend:latest}
+  build:
+    context: ../backend
+    args:
+      RELEASE: ${RELEASE:-dev}
+  env_file: .env
+  environment:
+    DJANGO_ENV: ${DJANGO_ENV:-production}
+    DATABASE_URL: postgres://${POSTGRES_USER:-najik}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-najik}
+    REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379/0
+    # Only Caddy can reach the api container, so proxy headers from any peer on the
+    # private network are trusted.
+    FORWARDED_ALLOW_IPS: "*"
+    TRUSTED_PROXY_COUNT: "1"
+  restart: unless-stopped
+  # `backend` is internal (postgres/redis are unreachable from outside); `edge` gives the
+  # app containers egress (FCM/APNs/Sentry) and lets Caddy reach the api.
+  networks: [backend, edge]
+  logging:
+    driver: json-file
+    options: {max-size: "20m", max-file: "5"}
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN}
+      TURN_DOMAIN: ${TURN_DOMAIN:?set TURN_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [edge, backend]
+
+  migrate:
+    <<: *backend
+    command: ["migrate"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *backend
+    command: ["api"]
+    expose: ["8000"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    stop_grace_period: 40s
+
+  worker:
+    <<: *backend
+    command: ["worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME --timeout 5 >/dev/null"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 60s
+
+  beat:
+    <<: *backend
+    command: ["beat"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-najik}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-najik}
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - log_min_duration_statement=500
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    shm_size: 256mb
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
     restart: unless-stopped
     command:
-      - -n
-      - --log-file=stdout
-      - --listening-port=3478
-      - --min-port=49160
-      - --max-port=49400
-      - --fingerprint
-      - --use-auth-secret
-      - --static-auth-secret=${TURN_SECRET}
-      - --realm=${TURN_REALM:-najik}
-      - --no-cli
-      - --no-multicast-peers
-      - --denied-peer-ip=10.0.0.0-10.255.255.255
-      - --denied-peer-ip=172.16.0.0-172.31.255.255
-      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      # Celery's broker and live call state must never be evicted.
+      - --maxmemory-policy
+      - noeviction
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    networks: [backend]
+
+  coturn:
+    image: coturn/coturn:4.6
+    restart: unless-stopped
+    # Host networking: TURN needs the real public IP and a large UDP relay port range.
+    network_mode: host
+    # Root is only needed to read Caddy's certificate files (0600, owned by root) for TURNS.
+    # See README.md ("TURN TLS") for running unprivileged with copied certificates instead.
+    user: "0:0"
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - caddy_data:/caddy:ro
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf
+      - --static-auth-secret=${TURN_SECRET:?set TURN_SECRET}
+      - --realm=${TURN_DOMAIN}
+      - --server-name=${TURN_DOMAIN}
+      - --external-ip=${TURN_EXTERNAL_IP:?set TURN_EXTERNAL_IP}
+      - --cert=/caddy/caddy/certificates/${TURN_CERT_ISSUER:-acme-v02.api.letsencrypt.org-directory}/${TURN_DOMAIN}/${TURN_DOMAIN}.crt
+      - --pkey=/caddy/caddy/certificates/${TURN_CERT_ISSUER:-acme-v02.api.letsencrypt.org-directory}/${TURN_DOMAIN}/${TURN_DOMAIN}.key
+    depends_on:
+      - caddy
 
 volumes:
-  najik-data:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  edge:
+  backend:
+    internal: true

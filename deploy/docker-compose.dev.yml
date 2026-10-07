@@ -1,0 +1,74 @@
+# Local development dependencies: PostgreSQL 17, Redis 7 and coturn.
+#
+#   docker compose -f deploy/docker-compose.dev.yml up -d
+#
+# Then in backend/.env:
+#   DATABASE_URL=postgres://najik:najik@localhost:5432/najik
+#   REDIS_URL=redis://localhost:6379/0
+#   TURN_SECRET=dev-turn-secret
+#   TURN_URLS=turn:<your LAN IP>:3478?transport=udp,turn:<your LAN IP>:3478?transport=tcp
+#   STUN_URLS=stun:<your LAN IP>:3478
+#
+# The backend itself runs on the host (`python manage.py runserver` / uvicorn) and the Celery
+# worker/beat with `celery -A config worker -B -l info` (see backend/README.md).
+
+name: najik-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: najik
+      POSTGRES_PASSWORD: najik
+      POSTGRES_DB: najik
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U najik -d najik"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata-dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Plain TURN/STUN without TLS. Private peer ranges are allowed so devices on the same LAN
+  # (and emulators) can be tested; never use this configuration in production.
+  coturn:
+    image: coturn/coturn:4.6
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49160-49200:49160-49200/udp"
+    command:
+      - -n
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --use-auth-secret
+      - --static-auth-secret=dev-turn-secret
+      - --realm=najik.local
+      - --fingerprint
+      - --no-tls
+      - --no-dtls
+      - --no-cli
+      - --no-tcp-relay
+      - --log-file=stdout
+      # Docker Desktop NAT: set to your host's LAN IP for relays to work across devices.
+      - --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
+
+volumes:
+  pgdata-dev:
+  redisdata-dev:
